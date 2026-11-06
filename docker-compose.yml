@@ -1,0 +1,45 @@
+# The API in Docker, connected to the music-db PostgreSQL started by the
+# db-postgresql-music project (`make up` there). Both share that project's network,
+# so the API reaches the database by container name, not through a host port.
+#
+# Settings come from .env (copy .env.example). Start: `make up` or
+#   docker compose up -d --build --wait
+name: music-api
+
+services:
+  api:
+    build: .
+    image: api-spring-music:latest
+    container_name: music-api
+    restart: unless-stopped
+    environment:
+      DB_HOST: ${DB_DOCKER_HOST:-music-db-postgres}
+      DB_PORT: "5432" # inside the Docker network, not the host port
+      DB_NAME: ${DB_NAME:-music_db}
+      DB_USER: ${DB_USER:-music}
+      DB_PASSWORD: ${DB_PASSWORD:-music}
+      SERVER_PORT: "8080"
+      APP_JWT_SECRET: ${APP_JWT_SECRET:?Set APP_JWT_SECRET in .env (openssl rand -base64 48)}
+      APP_JWT_ACCESS_TOKEN_TTL: ${APP_JWT_ACCESS_TOKEN_TTL:-15m}
+      APP_JWT_REFRESH_TOKEN_TTL: ${APP_JWT_REFRESH_TOKEN_TTL:-14d}
+      APP_ADMIN_USERNAME: ${APP_ADMIN_USERNAME:-}
+      APP_ADMIN_PASSWORD: ${APP_ADMIN_PASSWORD:-}
+      APP_ADMIN_EMAIL: ${APP_ADMIN_EMAIL:-}
+      APP_ADMIN_DISPLAY_NAME: ${APP_ADMIN_DISPLAY_NAME:-}
+      APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      APP_API_DOCS_ENABLED: ${APP_API_DOCS_ENABLED:-true}
+      JAVA_OPTS: ${JAVA_OPTS:-}
+    ports:
+      - "${SERVER_PORT:-8081}:8080"
+    networks:
+      - music-db
+    deploy:
+      resources:
+        limits:
+          memory: 768m
+
+networks:
+  music-db:
+    # Created by db-postgresql-music's docker compose (project "music-db").
+    name: ${MUSIC_DB_NETWORK:-music-db_default}
+    external: true

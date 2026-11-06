@@ -22,3 +22,38 @@
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# Maven build output
+target/
+.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+# Local settings and secrets (.env.example is the committed template)
+.env
+.env.*
+!.env.example
+
+# Claude Code project notes
+CLAUDE.md
+Prompts.md
+
+# IDEs and OS files
+.idea/
+*.iws
+*.iml
+*.ipr
+.vscode/
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+.DS_Store

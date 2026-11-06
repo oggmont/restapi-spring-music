@@ -1,0 +1,97 @@
+# Configuration is read from environment variables (12-factor). For local runs the
+# same .env file that docker compose uses is imported, so `./mvnw spring-boot:run`
+# and `docker compose up` share one set of settings. See .env.example.
+spring:
+  application:
+    name: api-spring-music
+  config:
+    import: optional:file:.env[.properties]
+  threads:
+    virtual:
+      enabled: true
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5432}/${DB_NAME:music_db}
+    username: ${DB_USER:music}
+    password: ${DB_PASSWORD:music}
+    hikari:
+      pool-name: music-db
+      maximum-pool-size: ${DB_POOL_SIZE:10}
+      connection-timeout: 5000 # ms (Hikari binds this as a plain long)
+      data-source-properties:
+        ApplicationName: api-spring-music
+  sql:
+    init:
+      mode: never # the schema comes from db-postgresql-music and Flyway, never from schema.sql
+  flyway:
+    # Flyway only manages the API-owned "auth" schema (credentials, roles, refresh
+    # tokens). The music schema in "public" is owned by db-postgresql-music.
+    # db-postgresql-music's init scripts also create it (same DDL as V1): on such a
+    # database Flyway records version 1 as the baseline instead of re-running V1.
+    schemas: auth
+    create-schemas: true
+    baseline-on-migrate: true
+    baseline-version: 1
+    locations: classpath:db/migration
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+  mvc:
+    problemdetails:
+      enabled: false # errors use the envelope from API-Design.md (see ApiError)
+
+server:
+  port: ${SERVER_PORT:8080}
+  compression:
+    enabled: true
+  error:
+    whitelabel:
+      enabled: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+      roles: ADMIN
+  info:
+    java:
+      enabled: true
+    os:
+      enabled: true
+
+springdoc:
+  # Interactive docs at /swagger-ui.html; set both to false to hide them.
+  api-docs:
+    enabled: ${APP_API_DOCS_ENABLED:true}
+  swagger-ui:
+    enabled: ${APP_API_DOCS_ENABLED:true}
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: method
+  default-produces-media-type: application/json
+
+app:
+  jwt:
+    # Base64-encoded HMAC key, at least 256 bits (`openssl rand -base64 48`).
+    # Empty: a random key is generated at startup and tokens stop working on restart.
+    secret: ${APP_JWT_SECRET:}
+    issuer: ${APP_JWT_ISSUER:api-spring-music}
+    audience: ${APP_JWT_AUDIENCE:api-spring-music}
+    access-token-ttl: ${APP_JWT_ACCESS_TOKEN_TTL:15m}
+    refresh-token-ttl: ${APP_JWT_REFRESH_TOKEN_TTL:14d}
+  admin:
+    # Super user created on first start when username and password are set.
+    username: ${APP_ADMIN_USERNAME:}
+    password: ${APP_ADMIN_PASSWORD:}
+    email: ${APP_ADMIN_EMAIL:}
+    display-name: ${APP_ADMIN_DISPLAY_NAME:}
+  cors:
+    allowed-origins: ${APP_CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:5173}
+
+logging:
+  level:
+    com.oggmont.music: INFO

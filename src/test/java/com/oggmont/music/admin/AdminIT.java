@@ -1,6 +1,7 @@
 package com.oggmont.music.admin;
 
 import com.oggmont.music.IntegrationTest;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -141,6 +142,10 @@ class AdminIT extends IntegrationTest {
 		});
 		assertThat(post(admin, "/admin/albums/" + albumId + "/tracks", """
 				{"tracks": [{"name": "Again", "track_number": 1, "milliseconds": 1000}]}""")).hasStatus(409);
+		// New tracks are in song search right away (its view is refreshed after the write).
+		List<String> found = read(this.mvc.get().uri(API + "/tracks?q=album maker&limit=100").exchange(),
+				"$.items[*].album.title");
+		assertThat(found).contains("First Album");
 
 		// Track 2's own genre was added to the album; it can't be removed while in use.
 		assertThat(put(admin, "/admin/albums/" + albumId + "/genres", """

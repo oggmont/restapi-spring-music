@@ -39,6 +39,10 @@ public final class DatabaseErrors {
 
 	public static final String INSUFFICIENT_PRIVILEGE = "42501";
 
+	/** Why {@code visibility} can't be sent or changed. */
+	public static final String VISIBILITY_MESSAGE = "A playlist's visibility follows its favorites: it is public while "
+			+ "anyone has it as a favorite, and private otherwise. Favorite it to make it public.";
+
 	/** Constraint name -> what to tell the client. */
 	private static final Map<String, Known> KNOWN = Map.ofEntries(
 			// Users
@@ -54,6 +58,14 @@ public final class DatabaseErrors {
 			// Playlists
 			invalid("playlist_visibility_fkey", "unknown_visibility", "visibility",
 					"Visibility must be public, unlisted or private."),
+			// Rules of the web UI, raised by triggers (check_violation named after the trigger)
+			invalid("playlist_visibility_derived", ErrorCodes.VISIBILITY_FOLLOWS_FAVORITES, "visibility",
+					VISIBILITY_MESSAGE),
+			invalid("playlist_follow_limit", ErrorCodes.FAVORITE_LIMIT_REACHED, null,
+					"You already have 5 favorite playlists. Remove one, or replace it (send \"replaces\")."),
+			invalid("playlist_track_limit", ErrorCodes.PLAYLIST_FULL, "track_ids", "A playlist holds at most 100 tracks."),
+			invalid("playlist_owner_limit", ErrorCodes.PLAYLIST_LIMIT_REACHED, null,
+					"You already own 20 playlists, the most you can have. Delete one to make another."),
 			invalid("playlist_track_track_id_fkey", "unknown_track", "track_ids", "One or more tracks don't exist."),
 			invalid("playlist_collaborator_role_fkey", "unknown_role", "role", "Role must be editor or viewer."),
 			invalid("user_saved_track_track_id_fkey", "unknown_track", "track_id", "That track doesn't exist."),

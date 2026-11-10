@@ -43,12 +43,19 @@ class PlaylistTrackService {
 		return page(playlistId, this.tracks.version(playlistId), caller, page, afterPosition);
 	}
 
-	/** Appends, or inserts at {@code position} and pushes the following entries down. */
+	/**
+	 * Appends, or inserts at {@code position} and pushes the following entries down. A
+	 * playlist holds at most 100 entries ({@code 422 playlist_full}, saying how many fit).
+	 */
 	@Transactional
 	TrackListChanges.Added add(int playlistId, Caller caller, PlaylistRequests.AddTracksRequest request, IfMatch ifMatch) {
 		ifMatch.require();
 		PlaylistRepository.PlaylistAccess access = this.guards.editable(playlistId, caller, true);
 		ifMatch.check(access.version());
+		long count = this.tracks.count(playlistId);
+		if (count + request.trackIds().size() > PlaylistLimits.MAX_TRACKS) {
+			throw PlaylistLimits.playlistFull(access.name(), count, request.trackIds().size());
+		}
 		int last = this.tracks.maxPosition(playlistId);
 		int position = (request.position() != null) ? request.position() : last + 1;
 		if (position > last + 1) {

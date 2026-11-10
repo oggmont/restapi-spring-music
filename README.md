@@ -1,6 +1,15 @@
 # api-spring-music
 
-A REST API for the **music-db** playlist platform: a music catalog (artists, albums, tracks, songs, people, genres, labels) plus users, playlists with collaborators, libraries and follows. It implements [API-Design.md](API-Design.md) on top of the PostgreSQL database from [db-postgresql-music](https://github.com/oggmont/db-postgresql-music), and adds JWT authentication with roles.
+A REST API for the **music-db** playlist platform: a music catalog (artists, albums, tracks, songs, people, genres, labels) plus users, playlists with collaborators, libraries and follows. It implements the API of [design-music-system](https://github.com/oggmont/design-music-system), including what its web UI needs (favorites, limits, random picks, song search), on top of the PostgreSQL database from [db-postgresql-music](https://github.com/oggmont/db-postgresql-music), and adds JWT authentication with roles.
+
+**The design comes first.** Everything here is based on [design-music-system](https://github.com/oggmont/design-music-system), and changes start there:
+
+| Design document | What it decides here |
+|---|---|
+| [API-Design.md](https://github.com/oggmont/design-music-system/blob/main/API-Design.md) | The contract: every endpoint, its body, its errors and the SQL behind it. Endpoints marked **(UI)** are the web UI's additions |
+| [REQUIREMENTS.md](https://github.com/oggmont/design-music-system/blob/main/REQUIREMENTS.md) | Every requirement with an ID, and where this implementation differs from the design |
+| [DB-Design.md](https://github.com/oggmont/design-music-system/blob/main/DB-Design.md) | The database changes behind the UI (DB-00 to DB-10), applied in db-postgresql-music |
+| [UI-Design.md](https://github.com/oggmont/design-music-system/blob/main/UI-Design.md) | The web UI (React) that calls this API: its rules (BR-xx) and the API changes it needs (G-xx) |
 
 - **Spring Boot 4.1 / Spring Framework 7 / Java 25**, Spring MVC on virtual threads, Spring Security 7, Jackson 3
 - **SQL-first data access** with `JdbcClient`: the schema's views, functions and triggers do the heavy lifting, and its errors (by SQLSTATE and constraint name) become HTTP errors
@@ -81,7 +90,7 @@ Swagger UI has every endpoint with its schema; use **Authorize** to paste an acc
 
 ## Authentication and roles
 
-The API is its own token issuer (the "login provider" of API-Design.md):
+The API is its own token issuer (see [Authentication](https://github.com/oggmont/design-music-system/blob/main/API-Design.md#authentication-auth) in API-Design.md):
 
 | Endpoint | What it does |
 |---|---|
@@ -106,13 +115,14 @@ The API is its own token issuer (the "login provider" of API-Design.md):
 
 ## API conventions
 
-These follow [API-Design.md](API-Design.md):
+These follow [API-Design.md's conventions](https://github.com/oggmont/design-music-system/blob/main/API-Design.md#conventions):
 
 - **Base URL** `/api/v1`. The version is resolved by Spring Framework's API versioning (`/api/1/...` works too; `/api/v2/...` answers `400`).
 - **JSON** in and out, `snake_case` field names, timestamps in ISO 8601 UTC (`"2026-11-05T20:43:11.123456Z"`), durations as `duration_ms` plus a display `duration` (`"4:20"`).
 - **Pagination**: `?limit=` (default 20, max 100) and `?offset=`, answering `{ "items": [...], "limit": 20, "offset": 0, "total": 193 }`. Keyset cursors where lists change often: `?after_position=` on playlist entries, `?before=<saved_at>&before_id=<id>` on the library (`before_id` breaks ties between items saved at the same instant).
 - **Partial updates**: `PATCH` changes only the fields sent; `null` clears a nullable field.
 - **Visibility**: a playlist you can't view answers `404`, not `403`, so private playlists don't reveal that they exist.
+- **Visibility follows favorites**: nobody chooses it. A playlist is `public` while at least one user (its owner or anyone else) has it as a favorite, and `private` when nobody does; new playlists are private. Sending `visibility` to `POST` or `PATCH /playlists` answers `422 visibility_follows_favorites`.
 - **Optimistic locking**: playlist responses carry `ETag: "<version>"`. Track-list writes need `If-Match` with it: `428` without, `412` when someone else changed the playlist (reload and retry). `PATCH` and `DELETE` on a playlist check `If-Match` when it is sent.
 - **Errors** always use one envelope; validation errors list the fields:
 
@@ -123,21 +133,34 @@ These follow [API-Design.md](API-Design.md):
 
 The database enforces most rules, and its errors are translated: unique violations → `409` (`username_taken`, `slug_taken`…), foreign keys, checks and trigger rules → `422` (`unknown_track`, `cannot_follow_self`, `integrity_violation`…), `insufficient_privilege` → `403`.
 
+### Rules of the web UI
+
+From [Favorites, visibility and limits](https://github.com/oggmont/design-music-system/blob/main/API-Design.md#favorites-visibility-and-limits). A **favorite** is a playlist follow, and a **song** in the UI is a **track** here.
+
+| Rule | Error when broken |
+|---|---|
+| At most **5 favorites** per user, own playlists included. `PUT /me/following/playlists/{id}` with `{"replaces": <id>}` swaps one out in one transaction | `422 favorite_limit_reached` |
+| At most **100 tracks** per playlist (and per request) | `422 playlist_full`, saying how many still fit |
+| At most **20 playlists** owned per user (collaborations don't count) | `422 playlist_limit_reached` |
+| Visibility follows favorites (above) | `422 visibility_follows_favorites` |
+
+Triggers in the database enforce all four, so they hold for every client; the API checks the limits first only to give clearer messages. `GET /me` returns `owned_playlist_count` and `favorite_count`, so the UI can show "9 of 20" before the limit is reached.
+
 ## Endpoints
 
-All of [API-Design.md](API-Design.md)'s endpoint index is implemented, plus authentication and account administration. "–" means no token is needed, "– / ✓" works without one for public playlists.
+All of [API-Design.md's endpoint index](https://github.com/oggmont/design-music-system/blob/main/API-Design.md#endpoint-index) is implemented, including the **(UI)** endpoints, plus authentication and account administration. "–" means no token is needed, "– / ✓" works without one for public playlists.
 
 | Area | Endpoints | Auth |
 |---|---|---|
 | **Auth** | `POST /auth/login`, `/auth/refresh`, `/auth/logout` | – |
-| **Account** | `POST /users` · `GET`, `PATCH`, `DELETE /me` · `PUT /me/password` · `GET /me/playlists` · `GET /me/feed` | – (sign-up), ✓ |
-| **Users** | `GET /users/{username}` · `/playlists` · `/followers` · `/following` | – |
-| **Playlists** | `POST /playlists` · `GET`, `PATCH`, `DELETE /playlists/{id}` · `GET /playlists/shared/{share_token}` · `POST /playlists/{id}/share-token` · `POST /playlists/{id}/copy` | – / ✓, owner |
+| **Account** | `POST /users` · `GET`, `PATCH`, `DELETE /me` · `PUT /me/password` · `GET /me/playlists?role=&sort=name\|last_added\|created&contains_track=` · `GET /me/feed` | – (sign-up), ✓ |
+| **Users** | `GET /users/{username}` · `/playlists` · `/favorites?sort=name\|favorited_at` · `/followers` · `/following` | – |
+| **Playlists** | `POST /playlists` · `GET`, `PATCH`, `DELETE /playlists/{id}` · `GET /playlists/random?limit=&exclude=` · `GET /playlists/shared/{share_token}` · `POST /playlists/{id}/share-token` · `POST /playlists/{id}/copy` | – / ✓, owner |
 | **Playlist tracks** | `GET`, `POST /playlists/{id}/tracks` · `POST /playlists/{id}/tracks/move` · `DELETE /playlists/{id}/tracks/{position}` · `DELETE /playlists/{id}/tracks?track_id=` · `GET /playlists/shared/{share_token}/tracks` | – / ✓, owner and editors |
 | **Collaborators** | `GET /playlists/{id}/collaborators` · `PUT`, `DELETE /playlists/{id}/collaborators/{username}` | owner, collaborators |
 | **Library** | `GET /me/tracks` · `PUT`, `DELETE /me/tracks/{track_id}` · `GET /me/tracks/contains?ids=` · `GET /me/albums` · `PUT`, `DELETE /me/albums/{album_id}` | ✓ |
-| **Follows** | `PUT`, `DELETE /me/following/{playlists/{id} \| artists/{slug} \| users/{username}}` · `GET /me/following/artists` · `GET /me/following/playlists` · `GET /playlists/{id}/followers` | ✓ |
-| **Catalog** | `GET /artists` · `/artists/{slug}` · `/artists/{slug}/albums` · `/artists/{slug}/members` · `/artists/{slug}/albums/{album_slug}` · `/albums/{id}` · `/albums/{id}/tracks` · `/tracks/{id}` · `/songs/{id}` · `/songs/{id}/recordings` · `/people/{id}` · `/genres` · `/genres/{id}/albums` · `/labels/{slug}` | – |
+| **Follows** (favorites) | `PUT`, `DELETE /me/following/{playlists/{id} \| artists/{slug} \| users/{username}}` · `GET /me/following/artists` · `GET /me/following/playlists?sort=name\|followed_at` · `GET /playlists/{id}/followers` | ✓ |
+| **Catalog** | `GET /artists` · `/artists/{slug}` · `/artists/{slug}/albums` · `/artists/{slug}/members` · `/artists/{slug}/albums/{album_slug}` · `/albums/{id}` · `/albums/{id}/tracks` · `/tracks?q=` (song search) · `/tracks/random?limit=&exclude=` · `/tracks/{id}` · `/songs/{id}` · `/songs/{id}/recordings` · `/people/{id}` · `/genres` · `/genres/{id}/albums` · `/labels/{slug}` | – |
 | **Search, reference** | `GET /search?q=&types=&limit=` · `GET /reference/{name}` | – |
 | **Catalog administration** | `POST /admin/artists` · `PATCH /admin/artists/{id}` · `POST /admin/albums` · `POST /admin/albums/{id}/tracks` · `PUT /admin/albums/{id}/genres` · `POST /admin/songs/{id}/credits` | curator |
 | **Account administration** | `PUT /admin/users/{username}/role` · `PUT /admin/users/{username}/password` | admin |
@@ -145,8 +168,11 @@ All of [API-Design.md](API-Design.md)'s endpoint index is implemented, plus auth
 Where this implementation adds to or adapts the design:
 
 - **Sign-up** (`POST /users`) takes a `password` and needs no token, because the API issues its own tokens. The response is the profile, as in the design.
-- **`GET /playlists/shared/{share_token}/tracks`** lets someone with a share link read the entries of an unlisted playlist (the design only covers its details).
+- **`GET /playlists/shared/{share_token}/tracks`** lets someone with a share link read the entries (the design only covers the details). Share links only open public playlists for now: under "visibility follows favorites" no playlist is `unlisted`.
 - **`GET /me`** also returns the account's `role`.
+- **Favorites**: `PUT` and `DELETE /me/following/playlists/{id}` answer `200` with the playlist's new state (`is_favorite`, `visibility`, `follower_count`, `my_favorite_count`, and `replaced` after a swap). `DELETE` of a playlist you can't view and never had as a favorite answers `404`, so it doesn't reveal private playlists.
+- **Three seed playlists are older than the 100-track limit** (*Music*, *90's Music*, *The Beatles: Original Albums*): nothing can be added to them or copied from them whole, but their entries can still be moved and removed.
+- **`GET /tracks?q=`** ranks matches in the track's name (1.0, 0.9, 0.8) above matches in its artist or album only (0.5 to 0.75), and also answers `422 query_too_short` when `q` is missing.
 - **Roles and `/admin/users/...`**: the design notes that catalog administration needs a role the schema doesn't have; it lives in the API's `auth` schema.
 
 ## Configuration
@@ -189,7 +215,8 @@ The integration tests (`*IT`) start PostgreSQL 17 with Testcontainers and load t
 
 ## How the database is used
 
-- The **music schema** (`public`) belongs to db-postgresql-music. The API never changes its structure. It reads through its views (`track_detail`, `album_summary`, `artist_summary`, `playlist_summary`) and functions (`playlist_can_view`, `playlist_can_edit`, `search_catalog`), and leaves derived data (positions, versions, follower counts, slugs, composer text) to its triggers.
+- The **music schema** (`public`) belongs to db-postgresql-music. The API never changes its structure. It reads through its views (`track_detail`, `album_summary`, `artist_summary`, `playlist_summary`) and functions (`playlist_can_view`, `playlist_can_edit`, `search_catalog`, `search_tracks`, `random_tracks`, `random_playlists`), and leaves derived data (positions, versions, follower counts, slugs, composer text, playlist visibility) and the UI's limits to its triggers.
+- **Song search** reads the materialized view `track_search`. The database's seed fills it; the API refreshes it (`CONCURRENTLY`, after the commit) when `/admin` writes change what it matches: renaming an artist or adding tracks.
 - The **`auth` schema** holds the API's data: `auth.role`, `auth.user_account` (password hash and role) and `auth.refresh_token`. Its rows reference `app_user` with `ON DELETE CASCADE`, so `DELETE /me` removes an account's credentials and sessions too.
 - db-postgresql-music's init scripts create the `auth` schema and seed the super user `oscargm` (user 8, role `admin`, **no password**). The API's Flyway migration [V1__auth_schema.sql](src/main/resources/db/migration/V1__auth_schema.sql) has the same DDL: on a database loaded by those scripts Flyway just records version 1 as its baseline, and on an older database it creates the schema. Keep the two in sync: a change to `auth` is a new migration here plus the same change at the end of `db/init/01_schema.sql` there.
 - On start the API sets the super user's password from `APP_ADMIN_PASSWORD` when the account has none, so passwords are never stored in the database project.
@@ -215,8 +242,8 @@ src/main/java/com/oggmont/music/
 ├── user/        public profiles, followers
 ├── playlist/    playlists, entries, collaborators, share links, feed
 ├── library/     liked tracks and saved albums
-├── follow/      follows of playlists, artists and users
-├── catalog/     artists, albums, tracks, songs, people, genres, labels
+├── follow/      follows of playlists (favorites), artists and users
+├── catalog/     artists, albums, tracks (song search, random), songs, people, genres, labels
 ├── search/      search_catalog()
 ├── reference/   lookup tables
 ├── admin/       catalog and account administration

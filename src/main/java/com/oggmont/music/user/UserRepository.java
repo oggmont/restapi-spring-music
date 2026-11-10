@@ -55,14 +55,19 @@ public class UserRepository {
 					rs.getString("display_name"), rs.getString("country_code"), rs.getString("bio"),
 					rs.getString("avatar_url"), rs.getBoolean("is_verified"), rs.getInt("follower_count"),
 					rs.getInt("following_count"), Rows.requiredInstant(rs, "created_at"), null, null, null,
-					Rows.bool(rs, "is_followed_by_me")))
+					Rows.bool(rs, "is_followed_by_me"), null, null))
 			.optional();
 	}
 
-	/** The owner's view of a profile, with email, role and {@code updated_at}. */
+	/**
+	 * The owner's view of a profile, with email, role, {@code updated_at} and the counts
+	 * the UI shows next to its limits.
+	 */
 	public Optional<UserProfile> findOwnProfile(int userId) {
 		return this.jdbc.sql("SELECT " + PROFILE_COLUMNS + """
-				, u.email, u.updated_at, coalesce(a.role, 'listener') AS role
+				, u.email, u.updated_at, coalesce(a.role, 'listener') AS role,
+				       (SELECT count(*) FROM playlist p WHERE p.owner_id = u.user_id) AS owned_playlist_count,
+				       (SELECT count(*) FROM playlist_follow f WHERE f.user_id = u.user_id) AS favorite_count
 				FROM app_user u
 				LEFT JOIN auth.user_account a ON a.user_id = u.user_id
 				WHERE u.user_id = :userId
@@ -72,7 +77,8 @@ public class UserRepository {
 					rs.getString("display_name"), rs.getString("country_code"), rs.getString("bio"),
 					rs.getString("avatar_url"), rs.getBoolean("is_verified"), rs.getInt("follower_count"),
 					rs.getInt("following_count"), Rows.requiredInstant(rs, "created_at"), rs.getString("email"),
-					Role.fromCode(rs.getString("role")), Rows.instant(rs, "updated_at"), null))
+					Role.fromCode(rs.getString("role")), Rows.instant(rs, "updated_at"), null,
+					rs.getInt("owned_playlist_count"), rs.getInt("favorite_count")))
 			.optional();
 	}
 

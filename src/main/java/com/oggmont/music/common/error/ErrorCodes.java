@@ -38,6 +38,18 @@ public final class ErrorCodes {
 
 	public static final String INTERNAL_ERROR = "internal_error";
 
+	/** A sixth favorite playlist (limit 5). */
+	public static final String FAVORITE_LIMIT_REACHED = "favorite_limit_reached";
+
+	/** A 101st track in a playlist (limit 100). */
+	public static final String PLAYLIST_FULL = "playlist_full";
+
+	/** A 21st owned playlist (limit 20). */
+	public static final String PLAYLIST_LIMIT_REACHED = "playlist_limit_reached";
+
+	/** {@code visibility} sent to {@code POST} or {@code PATCH /playlists}: it follows favorites. */
+	public static final String VISIBILITY_FOLLOWS_FAVORITES = "visibility_follows_favorites";
+
 	public static final String SERVICE_UNAVAILABLE = "service_unavailable";
 
 	private ErrorCodes() {

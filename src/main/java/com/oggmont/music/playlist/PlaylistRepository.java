@@ -47,7 +47,7 @@ class PlaylistRepository {
 	 */
 	Optional<PlaylistAccess> access(int playlistId, @Nullable Integer me, boolean lock) {
 		return this.jdbc.sql("""
-				SELECT p.owner_id, p.version, p.visibility,
+				SELECT p.name, p.owner_id, p.version, p.visibility,
 				       playlist_can_view(p.playlist_id, :me) AS can_view,
 				       playlist_can_edit(p.playlist_id, :me) AS can_edit,
 				       EXISTS (SELECT 1 FROM playlist_collaborator c
@@ -57,7 +57,8 @@ class PlaylistRepository {
 				""" + (lock ? "FOR UPDATE OF p" : ""))
 			.param("me", me, Types.INTEGER)
 			.param("playlistId", playlistId)
-			.query((rs, rowNum) -> new PlaylistAccess(playlistId, rs.getInt("owner_id"), rs.getInt("version"),
+			.query((rs, rowNum) -> new PlaylistAccess(playlistId, rs.getString("name"), rs.getInt("owner_id"),
+					rs.getInt("version"),
 					rs.getString("visibility"), rs.getBoolean("can_view"), rs.getBoolean("can_edit"),
 					rs.getBoolean("is_collaborator"), me))
 			.optional();
@@ -90,27 +91,29 @@ class PlaylistRepository {
 			.optional();
 	}
 
-	int insert(int ownerId, String name, @Nullable String description, @Nullable String visibility,
-			@Nullable String coverUrl) {
+	/**
+	 * Creates a playlist. It is private: visibility follows favorites, and a trigger sets
+	 * it. A 21st playlist fails with {@code playlist_owner_limit}.
+	 */
+	int insert(int ownerId, String name, @Nullable String description, @Nullable String coverUrl) {
 		return this.jdbc.sql("""
-				INSERT INTO playlist (name, description, owner_id, visibility, cover_url)
-				VALUES (:name, :description, :ownerId, coalesce(:visibility, 'public'), :coverUrl)
+				INSERT INTO playlist (name, description, owner_id, cover_url)
+				VALUES (:name, :description, :ownerId, :coverUrl)
 				RETURNING playlist_id
 				""")
 			.param("name", name)
 			.param("description", description, Types.VARCHAR)
 			.param("ownerId", ownerId)
-			.param("visibility", visibility, Types.VARCHAR)
 			.param("coverUrl", coverUrl, Types.VARCHAR)
 			.query(Integer.class)
 			.single();
 	}
 
-	/** Copies a playlist's details into a new private playlist owned by {@code ownerId}. */
+	/** Copies a playlist's details into a new (private) playlist owned by {@code ownerId}. */
 	int copy(int sourceId, int ownerId, @Nullable String name) {
 		return this.jdbc.sql("""
-				INSERT INTO playlist (name, description, owner_id, visibility, cover_url)
-				SELECT coalesce(:name, name), description, :ownerId, 'private', cover_url
+				INSERT INTO playlist (name, description, owner_id, cover_url)
+				SELECT coalesce(:name, name), description, :ownerId, cover_url
 				FROM playlist
 				WHERE playlist_id = :sourceId
 				RETURNING playlist_id
@@ -147,37 +150,90 @@ class PlaylistRepository {
 			.single();
 	}
 
-	/** Playlists the user owns or collaborates on, most recently changed first, with the user's role. */
-	Page<PlaylistSummary> findForMember(int me, PageParams page) {
-		List<PlaylistSummary> items = this.jdbc.sql("""
+	/** How many playlists the user owns (the limit is 20). */
+	int countOwned(int ownerId) {
+		return this.jdbc.sql("SELECT count(*) FROM playlist WHERE owner_id = :ownerId")
+			.param("ownerId", ownerId)
+			.query(Integer.class)
+			.single();
+	}
+
+	/**
+	 * Playlists the user owns or collaborates on, with the user's role, whether it is a
+	 * favorite, when the user last added to it and, with {@code containsTrack}, whether it
+	 * holds that track.
+	 *
+	 * @param role only playlists where the user has this role (owner, editor, viewer), or all
+	 * @param sort the order
+	 */
+	Page<MyPlaylist> findForMember(int me, @Nullable String role, MemberSort sort, @Nullable Integer containsTrack,
+			PageParams page) {
+		String mine = """
 				WITH mine AS (
 				    SELECT playlist_id, 'owner' AS my_role FROM playlist WHERE owner_id = :me
 				    UNION ALL
 				    SELECT playlist_id, role FROM playlist_collaborator WHERE user_id = :me
-				), page AS (
-				    SELECT m.playlist_id, m.my_role, p.updated_at
-				    FROM mine m
-				    JOIN playlist p ON p.playlist_id = m.playlist_id
-				    ORDER BY p.updated_at DESC, m.playlist_id DESC
+				), filtered AS (
+				    SELECT playlist_id, my_role FROM mine WHERE CAST(:role AS text) IS NULL OR my_role = :role
+				)
+				""";
+		List<MyPlaylist> items = this.jdbc.sql(mine + """
+				, page AS (
+				    SELECT f.playlist_id, f.my_role, la.last_added_at,
+				           row_number() OVER (ORDER BY %1$s) AS n
+				    FROM filtered f
+				    JOIN playlist p ON p.playlist_id = f.playlist_id
+				    LEFT JOIN LATERAL (SELECT max(pt.added_at) AS last_added_at FROM playlist_track pt
+				                       WHERE pt.added_by = :me AND pt.playlist_id = f.playlist_id) la ON true
+				    ORDER BY %1$s
 				    LIMIT :limit OFFSET :offset
 				)
-				SELECT
-				""" + SUMMARY_COLUMNS + """
-				, page.my_role
+				SELECT %2$s,
+				       page.my_role, page.last_added_at,
+				       EXISTS (SELECT 1 FROM playlist_follow fo
+				               WHERE fo.playlist_id = page.playlist_id AND fo.user_id = :me) AS is_favorite,
+				       CASE WHEN CAST(:track AS integer) IS NULL THEN NULL
+				            ELSE EXISTS (SELECT 1 FROM playlist_track pt
+				                         WHERE pt.track_id = :track AND pt.playlist_id = page.playlist_id)
+				       END AS contains_track
 				FROM page
 				JOIN playlist_summary ps ON ps.playlist_id = page.playlist_id
-				ORDER BY page.updated_at DESC, page.playlist_id DESC
-				""")
+				ORDER BY page.n
+				""".formatted(sort.orderBy, SUMMARY_COLUMNS))
 			.param("me", me)
+			.param("role", role, Types.VARCHAR)
+			.param("track", containsTrack, Types.INTEGER)
 			.param("limit", page.resolvedLimit())
 			.param("offset", page.resolvedOffset())
-			.query((rs, rowNum) -> PlaylistSql.summary(rs, rs.getString("my_role")))
+			.query((rs, rowNum) -> new MyPlaylist(PlaylistSql.summary(rs), rs.getString("my_role"),
+					rs.getBoolean("is_favorite"), Rows.instant(rs, "last_added_at"), Rows.bool(rs, "contains_track")))
 			.list();
-		long total = this.jdbc.sql("""
-				SELECT (SELECT count(*) FROM playlist WHERE owner_id = :me)
-				     + (SELECT count(*) FROM playlist_collaborator WHERE user_id = :me)
-				""").param("me", me).query(Long.class).single();
+		long total = this.jdbc.sql(mine + "SELECT count(*) FROM filtered")
+			.param("me", me)
+			.param("role", role, Types.VARCHAR)
+			.query(Long.class)
+			.single();
 		return Page.of(items, page, total);
+	}
+
+	/**
+	 * Random public playlists that the user neither owns nor has as a favorite (any public
+	 * playlists when anonymous), from the schema's {@code random_playlists()}.
+	 */
+	List<PlaylistSummary> random(@Nullable Integer me, int limit, int[] exclude) {
+		return this.jdbc.sql("""
+				SELECT
+				""" + SUMMARY_COLUMNS + """
+
+				FROM random_playlists(:me, :limit, CAST(:exclude AS integer[])) WITH ORDINALITY AS r(playlist_id, n)
+				JOIN playlist_summary ps ON ps.playlist_id = r.playlist_id
+				ORDER BY r.n
+				""")
+			.param("me", me, Types.INTEGER)
+			.param("limit", limit)
+			.param("exclude", exclude)
+			.query((rs, rowNum) -> PlaylistSql.summary(rs))
+			.list();
 	}
 
 	/** A user's public playlists, oldest first (the order shown on their profile). */
@@ -199,7 +255,7 @@ class PlaylistRepository {
 			.param("ownerId", ownerId)
 			.param("limit", page.resolvedLimit())
 			.param("offset", page.resolvedOffset())
-			.query((rs, rowNum) -> PlaylistSql.summary(rs, null))
+			.query((rs, rowNum) -> PlaylistSql.summary(rs))
 			.list();
 		long total = this.jdbc
 			.sql("SELECT count(*) FROM playlist WHERE owner_id = :ownerId AND visibility = 'public'")
@@ -280,19 +336,40 @@ class PlaylistRepository {
 	 * Access facts about one playlist for one caller.
 	 *
 	 * @param playlistId the playlist
+	 * @param name its name
 	 * @param ownerId its owner
 	 * @param version its current version
-	 * @param visibility public, unlisted or private
+	 * @param visibility public or private (it follows favorites)
 	 * @param canView {@code playlist_can_view(playlist, caller)}
 	 * @param canEdit {@code playlist_can_edit(playlist, caller)}
 	 * @param isCollaborator whether the caller is an editor or viewer
 	 * @param me the caller, or null when anonymous
 	 */
-	record PlaylistAccess(int playlistId, int ownerId, int version, String visibility, boolean canView, boolean canEdit,
+	record PlaylistAccess(int playlistId, String name, int ownerId, int version, String visibility, boolean canView, boolean canEdit,
 			boolean isCollaborator, @Nullable Integer me) {
 
 		boolean isOwner() {
 			return this.me != null && this.me == this.ownerId;
+		}
+
+	}
+
+	/** Orders of {@code GET /me/playlists?sort=}, over {@code filtered f}, {@code playlist p} and the lateral {@code la}. */
+	enum MemberSort {
+
+		/** A-Z, ignoring accents and case. */
+		NAME("f_search_key(p.name), p.playlist_id"),
+
+		/** The playlist the caller added to most recently first ("last used"); never-used ones last, newest first. */
+		LAST_ADDED("la.last_added_at DESC NULLS LAST, p.created_at DESC, p.playlist_id DESC"),
+
+		/** Newest first (the default). */
+		CREATED("p.created_at DESC, p.playlist_id DESC");
+
+		final String orderBy;
+
+		MemberSort(String orderBy) {
+			this.orderBy = orderBy;
 		}
 
 	}

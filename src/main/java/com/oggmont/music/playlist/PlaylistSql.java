@@ -4,7 +4,6 @@ import com.oggmont.music.common.jdbc.Rows;
 import com.oggmont.music.user.UserRef;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import org.jspecify.annotations.Nullable;
 
 /**
  * Column list and row mapping of {@link PlaylistSummary}, from {@code playlist_summary ps}.
@@ -19,12 +18,11 @@ public final class PlaylistSql {
 	private PlaylistSql() {
 	}
 
-	public static PlaylistSummary summary(ResultSet rs, @Nullable String myRole) throws SQLException {
+	public static PlaylistSummary summary(ResultSet rs) throws SQLException {
 		return new PlaylistSummary(rs.getInt("playlist_id"), rs.getString("name"), rs.getString("description"),
 				rs.getString("visibility"), rs.getString("cover_url"), owner(rs), rs.getBoolean("is_collaborative"),
 				rs.getInt("track_count"), rs.getLong("total_milliseconds"), rs.getInt("follower_count"),
-				rs.getInt("version"), Rows.requiredInstant(rs, "created_at"), Rows.requiredInstant(rs, "updated_at"),
-				myRole);
+				rs.getInt("version"), Rows.requiredInstant(rs, "created_at"), Rows.requiredInstant(rs, "updated_at"));
 	}
 
 	static UserRef owner(ResultSet rs) throws SQLException {

@@ -86,8 +86,8 @@ public abstract class IntegrationTest {
 		return login(username, SEED_PASSWORD);
 	}
 
-	/** Creates a playlist owned by the token's user; returns its ID. */
-	protected int createPlaylist(String token, String name, String visibility, int... trackIds) {
+	/** Creates a playlist owned by the token's user (new playlists are private); returns its ID. */
+	protected int createPlaylist(String token, String name, int... trackIds) {
 		StringBuilder ids = new StringBuilder();
 		for (int id : trackIds) {
 			ids.append(ids.isEmpty() ? "" : ",").append(id);
@@ -97,10 +97,33 @@ public abstract class IntegrationTest {
 			.header(HttpHeaders.AUTHORIZATION, bearer(token))
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("""
-					{"name": "%s", "visibility": "%s", "track_ids": [%s]}""".formatted(name, visibility, ids))
+					{"name": "%s", "track_ids": [%s]}""".formatted(name, ids))
 			.exchange();
 		assertThat(result).hasStatus(201);
 		return read(result, "$.playlist_id");
+	}
+
+	/** Creates a playlist and makes it public the only way there is: its owner favorites it. */
+	protected int createPublicPlaylist(String token, String name, int... trackIds) {
+		int id = createPlaylist(token, name, trackIds);
+		assertThat(favorite(token, id)).hasStatusOk().bodyJson().extractingPath("$.visibility").isEqualTo("public");
+		return id;
+	}
+
+	/** {@code PUT /me/following/playlists/{id}}: favorites a playlist. */
+	protected MvcTestResult favorite(String token, int playlistId) {
+		return this.mvc.put()
+			.uri(API + "/me/following/playlists/{id}", playlistId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token))
+			.exchange();
+	}
+
+	/** {@code DELETE /me/following/playlists/{id}}: unfavorites a playlist. */
+	protected MvcTestResult unfavorite(String token, int playlistId) {
+		return this.mvc.delete()
+			.uri(API + "/me/following/playlists/{id}", playlistId)
+			.header(HttpHeaders.AUTHORIZATION, bearer(token))
+			.exchange();
 	}
 
 	protected static String bearer(String token) {

@@ -103,9 +103,16 @@ class LibraryAndFollowIT extends IntegrationTest {
 	@Test
 	void followingPlaylistsRespectsVisibility() {
 		TestUser user = newUser("listfan");
-		assertThat(put(user, "/me/following/playlists/23")).hasStatus(204);
+		assertThat(put(user, "/me/following/playlists/23")).hasStatusOk()
+			.bodyJson()
+			.satisfies((json) -> {
+				assertThat(json).extractingPath("$.is_favorite").isEqualTo(true);
+				assertThat(json).extractingPath("$.visibility").isEqualTo("public");
+				assertThat(json).extractingPath("$.my_favorite_count").isEqualTo(1);
+			});
 		assertThat(put(user, "/me/following/playlists/21")).as("someone else's private playlist").hasStatus(404);
-		assertThat(delete(user, "/me/following/playlists/21")).as("unfollowing always works").hasStatus(204);
+		assertThat(delete(user, "/me/following/playlists/21")).as("a private playlist you never favorited")
+			.hasStatus(404);
 		assertThat(get(user, "/me/following/playlists")).bodyJson()
 			.extractingPath("$.items[*].playlist.name")
 			.asArray()

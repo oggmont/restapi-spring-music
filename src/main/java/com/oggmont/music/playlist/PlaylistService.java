@@ -9,6 +9,7 @@ import com.oggmont.music.common.web.IfMatch;
 import com.oggmont.music.common.web.PartialUpdate;
 import com.oggmont.music.user.UserRepository;
 import java.sql.Types;
+import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import org.jspecify.annotations.Nullable;
@@ -48,13 +49,25 @@ class PlaylistService {
 			.orElseThrow(PlaylistGuards::shareLinkNotFound);
 	}
 
-	/** Creates the playlist and its first entries in one transaction. */
+	/**
+	 * Creates the playlist and its first entries in one transaction. It starts private;
+	 * favoriting it makes it public. At most 20 owned playlists and 100 tracks (the
+	 * database enforces both; the checks here only give clearer messages).
+	 */
 	@Transactional
 	PlaylistDetail create(Caller caller, PlaylistRequests.CreatePlaylistRequest request) {
+		if (request.visibility() != null) {
+			throw PlaylistLimits.visibilityFollowsFavorites();
+		}
+		List<Integer> trackIds = (request.trackIds() != null) ? request.trackIds() : List.of();
+		if (trackIds.size() > PlaylistLimits.MAX_TRACKS) {
+			throw PlaylistLimits.tooManyForNewPlaylist(trackIds.size());
+		}
+		requireRoomForAnotherPlaylist(caller);
 		int playlistId = this.playlists.insert(caller.userId(), request.name().trim(), request.description(),
-				request.visibility(), request.coverUrl());
-		if (request.trackIds() != null && !request.trackIds().isEmpty()) {
-			this.tracks.insert(playlistId, request.trackIds(), 1, caller.userId());
+				request.coverUrl());
+		if (!trackIds.isEmpty()) {
+			this.tracks.insert(playlistId, trackIds, 1, caller.userId());
 		}
 		return get(playlistId, caller);
 	}
@@ -63,7 +76,10 @@ class PlaylistService {
 	@Transactional
 	PlaylistDetail update(int playlistId, Caller caller, PartialUpdate<PlaylistRequests.UpdatePlaylistRequest> patch,
 			IfMatch ifMatch) {
-		patch.rejectNulls("name", "visibility");
+		if (patch.has("visibility")) {
+			throw PlaylistLimits.visibilityFollowsFavorites();
+		}
+		patch.rejectNulls("name");
 		PlaylistRepository.PlaylistAccess access = this.guards.owned(playlistId, caller, true);
 		ifMatch.check(access.version());
 		PlaylistRequests.UpdatePlaylistRequest request = patch.value();
@@ -73,9 +89,6 @@ class PlaylistService {
 		}
 		if (patch.has("description")) {
 			changes.set("description", request.description(), Types.VARCHAR);
-		}
-		if (patch.has("visibility")) {
-			changes.set("visibility", Objects.requireNonNull(request.visibility()).trim(), Types.VARCHAR);
 		}
 		if (patch.has("cover_url")) {
 			changes.set("cover_url", request.coverUrl(), Types.VARCHAR);
@@ -99,17 +112,38 @@ class PlaylistService {
 		return this.playlists.regenerateShareToken(playlistId);
 	}
 
-	/** Copies a playlist the caller can view into a new private playlist the caller owns. */
+	/**
+	 * Copies a playlist the caller can view into a new private playlist the caller owns.
+	 * The copy counts toward the caller's 20 playlists and holds at most 100 tracks.
+	 */
 	@Transactional
 	PlaylistDetail copy(int playlistId, Caller caller, @Nullable String name) {
 		this.guards.viewable(playlistId, caller, false);
+		long count = this.tracks.count(playlistId);
+		if (count > PlaylistLimits.MAX_TRACKS) {
+			throw PlaylistLimits.tooManyForNewPlaylist((int) count);
+		}
+		requireRoomForAnotherPlaylist(caller);
 		int copyId = this.playlists.copy(playlistId, caller.userId(), (name != null) ? name.trim() : null);
 		this.tracks.copy(playlistId, copyId, caller.userId());
 		return get(copyId, caller);
 	}
 
-	Page<PlaylistSummary> mine(Caller caller, PageParams page) {
-		return this.playlists.findForMember(caller.userId(), page);
+	Page<MyPlaylist> mine(Caller caller, @Nullable String role, PlaylistRepository.MemberSort sort,
+			@Nullable Integer containsTrack, PageParams page) {
+		return this.playlists.findForMember(caller.userId(), role, sort, containsTrack, page);
+	}
+
+	/** Random public playlists by other users that the caller hasn't favorited. */
+	List<PlaylistSummary> random(@Nullable Caller caller, int limit, List<Integer> exclude) {
+		return this.playlists.random(PlaylistGuards.idOf(caller), limit,
+				exclude.stream().mapToInt(Integer::intValue).toArray());
+	}
+
+	private void requireRoomForAnotherPlaylist(Caller caller) {
+		if (this.playlists.countOwned(caller.userId()) >= PlaylistLimits.MAX_OWNED) {
+			throw PlaylistLimits.ownedLimitReached();
+		}
 	}
 
 	Page<PlaylistSummary> publicPlaylistsOf(String username, PageParams page) {

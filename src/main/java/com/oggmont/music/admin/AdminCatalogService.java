@@ -3,6 +3,7 @@ package com.oggmont.music.admin;
 import com.oggmont.music.catalog.AlbumRepository;
 import com.oggmont.music.catalog.ArtistRepository;
 import com.oggmont.music.catalog.SongRepository;
+import com.oggmont.music.catalog.TrackSearchIndex;
 import com.oggmont.music.common.error.ApiException;
 import com.oggmont.music.common.jdbc.ColumnChanges;
 import com.oggmont.music.common.web.PartialUpdate;
@@ -17,7 +18,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /**
  * Catalog administration. Some rules are checked by the database at commit (an album
  * lists its credited artist; exactly one primary genre), so related rows are written in
- * one transaction, and a violation surfaces as {@code 422} when it commits.
+ * one transaction, and a violation surfaces as {@code 422} when it commits. Writes that
+ * change what song search matches (artist names, new tracks) refresh its view afterwards.
  */
 @Service
 class AdminCatalogService {
@@ -32,13 +34,16 @@ class AdminCatalogService {
 
 	private final TransactionTemplate transactions;
 
+	private final TrackSearchIndex trackSearch;
+
 	AdminCatalogService(AdminCatalogRepository catalog, ArtistRepository artists, AlbumRepository albums,
-			SongRepository songs, TransactionTemplate transactions) {
+			SongRepository songs, TransactionTemplate transactions, TrackSearchIndex trackSearch) {
 		this.catalog = catalog;
 		this.artists = artists;
 		this.albums = albums;
 		this.songs = songs;
 		this.transactions = transactions;
+		this.trackSearch = trackSearch;
 	}
 
 	ArtistRepository.ArtistDetail createArtist(AdminRequests.CreateArtistRequest request) {
@@ -65,6 +70,9 @@ class AdminCatalogService {
 		set(patch, changes, "musicbrainz_id", request.musicbrainzId(), Types.OTHER);
 		String slug = this.transactions.execute((status) -> this.catalog.updateArtist(artistId, changes)
 			.orElseThrow(() -> ApiException.notFound("No artist " + artistId + ".")));
+		if (patch.has("name")) {
+			this.trackSearch.refresh();
+		}
 		return this.artists.find(required(slug), null).orElseThrow();
 	}
 
@@ -100,6 +108,7 @@ class AdminCatalogService {
 		requireAlbum(albumId);
 		this.transactions.executeWithoutResult(
 				(status) -> request.tracks().forEach((track) -> this.catalog.insertTrack(albumId, track)));
+		this.trackSearch.refresh();
 		return this.albums.tracks(albumId);
 	}
 

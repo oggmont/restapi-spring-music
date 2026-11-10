@@ -33,10 +33,10 @@ class PlaylistIT extends IntegrationTest {
 			.header(HttpHeaders.AUTHORIZATION, owner.bearer())
 			.contentType(MediaType.APPLICATION_JSON)
 			.content("""
-					{"name": "Sunday Morning", "description": "Coffee and vinyl.", "visibility": "private",
-					 "track_ids": [3674, 3669, 4037]}""")
+					{"name": "Sunday Morning", "description": "Coffee and vinyl.", "track_ids": [3674, 3669, 4037]}""")
 			.exchange();
 		assertThat(result).hasStatus(201).hasHeader(HttpHeaders.ETAG, "\"2\"").bodyJson().satisfies((json) -> {
+			assertThat(json).extractingPath("$.visibility").isEqualTo("private");
 			assertThat(json).extractingPath("$.track_count").isEqualTo(3);
 			assertThat(json).extractingPath("$.duration_ms").isEqualTo(685000);
 			assertThat(json).extractingPath("$.version").isEqualTo(2);
@@ -53,16 +53,13 @@ class PlaylistIT extends IntegrationTest {
 	void visibilityDecidesWhoCanOpenAPlaylist() {
 		TestUser owner = newUser("vis");
 		TestUser stranger = newUser("stranger");
-		int privateId = createPlaylist(owner.token(), "Mine", "private", SOMETHING);
-		int unlistedId = createPlaylist(owner.token(), "Link only", "unlisted", SOMETHING);
-		int publicId = createPlaylist(owner.token(), "For everyone", "public", SOMETHING);
+		int privateId = createPlaylist(owner.token(), "Mine", SOMETHING);
+		int publicId = createPublicPlaylist(owner.token(), "For everyone", SOMETHING);
 
-		for (int id : List.of(privateId, unlistedId)) {
-			assertThat(this.mvc.get().uri(API + "/playlists/{id}", id)).hasStatus(404);
-			assertThat(this.mvc.get().uri(API + "/playlists/{id}", id).header(HttpHeaders.AUTHORIZATION, stranger.bearer()))
-				.hasStatus(404);
-			assertThat(this.mvc.get().uri(API + "/playlists/{id}/tracks", id)).hasStatus(404);
-		}
+		assertThat(this.mvc.get().uri(API + "/playlists/{id}", privateId)).hasStatus(404);
+		assertThat(this.mvc.get().uri(API + "/playlists/{id}", privateId).header(HttpHeaders.AUTHORIZATION, stranger.bearer()))
+			.hasStatus(404);
+		assertThat(this.mvc.get().uri(API + "/playlists/{id}/tracks", privateId)).hasStatus(404);
 		assertThat(this.mvc.get().uri(API + "/playlists/{id}", publicId)).hasStatusOk()
 			.hasHeader(HttpHeaders.ETAG, "\"2\"")
 			.bodyJson()
@@ -84,7 +81,7 @@ class PlaylistIT extends IntegrationTest {
 	@Test
 	void trackListWritesNeedTheCurrentVersion() {
 		TestUser owner = newUser("etag");
-		int id = createPlaylist(owner.token(), "Versions", "public", SOMETHING);
+		int id = createPublicPlaylist(owner.token(), "Versions", SOMETHING);
 
 		assertThat(addTracks(owner, id, null, "[3735]", null)).hasStatus(428)
 			.bodyJson()
@@ -107,7 +104,7 @@ class PlaylistIT extends IntegrationTest {
 	@Test
 	void addAtAPositionMoveAndRemoveKeepPositionsContiguous() {
 		TestUser owner = newUser("order");
-		int id = createPlaylist(owner.token(), "Order", "public", HERE_COMES_THE_SUN, SOMETHING, WISH_YOU_WERE_HERE);
+		int id = createPublicPlaylist(owner.token(), "Order", HERE_COMES_THE_SUN, SOMETHING, WISH_YOU_WERE_HERE);
 
 		assertThat(addTracks(owner, id, etag(owner, id), "[3735, 3668]", 2)).hasStatus(201);
 		assertThat(entries(owner.token(), id)).containsExactly(HERE_COMES_THE_SUN, HEY_JUDE, COME_TOGETHER, SOMETHING,
@@ -147,7 +144,7 @@ class PlaylistIT extends IntegrationTest {
 	@Test
 	void invalidTrackListChangesAreRejected() {
 		TestUser owner = newUser("invalid");
-		int id = createPlaylist(owner.token(), "Invalid", "public", SOMETHING);
+		int id = createPublicPlaylist(owner.token(), "Invalid", SOMETHING);
 		assertThat(addTracks(owner, id, "*", "[999999]", null)).hasStatus(422)
 			.bodyJson()
 			.extractingPath("$.error.code")
@@ -166,7 +163,7 @@ class PlaylistIT extends IntegrationTest {
 	@Test
 	void keysetPagingOfEntries() {
 		TestUser owner = newUser("keyset");
-		int id = createPlaylist(owner.token(), "Keyset", "public", HERE_COMES_THE_SUN, SOMETHING, WISH_YOU_WERE_HERE,
+		int id = createPublicPlaylist(owner.token(), "Keyset", HERE_COMES_THE_SUN, SOMETHING, WISH_YOU_WERE_HERE,
 				HEY_JUDE);
 		MvcTestResult page = this.mvc.get().uri(API + "/playlists/{id}/tracks?limit=2&after_position=2", id).exchange();
 		assertThat(page).hasStatusOk().bodyJson().satisfies((json) -> {
@@ -179,7 +176,7 @@ class PlaylistIT extends IntegrationTest {
 	void patchChangesOnlyTheFieldsSentAndChecksIfMatchWhenGiven() {
 		TestUser owner = newUser("patch");
 		TestUser other = newUser("notowner");
-		int id = createPlaylist(owner.token(), "Before", "public", SOMETHING);
+		int id = createPublicPlaylist(owner.token(), "Before", SOMETHING);
 
 		assertThat(patch(owner, id, null, """
 				{"description": "Now with a description"}""")).hasStatusOk().bodyJson().satisfies((json) -> {
@@ -197,18 +194,18 @@ class PlaylistIT extends IntegrationTest {
 		assertThat(patch(owner, id, null, """
 				{"name": null}""")).hasStatus(422);
 		assertThat(patch(owner, id, null, """
-				{"visibility": "secret"}""")).hasStatus(422)
+				{"visibility": "private"}""")).as("visibility follows favorites").hasStatus(422)
 			.bodyJson()
 			.extractingPath("$.error.code")
-			.isEqualTo("unknown_visibility");
+			.isEqualTo("visibility_follows_favorites");
 		assertThat(patch(other, id, null, """
 				{"name": "Mine now"}""")).hasStatus(403);
 	}
 
 	@Test
-	void shareLinksOpenUnlistedPlaylistsUntilRegenerated() {
+	void shareLinksOpenPublicPlaylistsUntilRegeneratedOrPrivate() {
 		TestUser owner = newUser("share");
-		int id = createPlaylist(owner.token(), "Secret mix", "unlisted", SOMETHING, HEY_JUDE);
+		int id = createPublicPlaylist(owner.token(), "Secret mix", SOMETHING, HEY_JUDE);
 		String token = read(this.mvc.get().uri(API + "/playlists/{id}", id).header(HttpHeaders.AUTHORIZATION, owner.bearer())
 			.exchange(), "$.share_token");
 
@@ -232,9 +229,8 @@ class PlaylistIT extends IntegrationTest {
 		assertThat(this.mvc.get().uri(API + "/playlists/shared/{token}", newToken)).hasStatusOk();
 		assertThat(this.mvc.get().uri(API + "/playlists/shared/not-a-uuid")).hasStatus(404);
 
-		// A share link stops working while the playlist is private.
-		assertThat(patch(owner, id, null, """
-				{"visibility": "private"}""")).hasStatusOk();
+		// A share link stops working while the playlist is private (its last favorite removed).
+		assertThat(unfavorite(owner.token(), id)).hasStatusOk().bodyJson().extractingPath("$.visibility").isEqualTo("private");
 		assertThat(this.mvc.get().uri(API + "/playlists/shared/{token}", newToken)).hasStatus(404);
 	}
 
@@ -267,7 +263,7 @@ class PlaylistIT extends IntegrationTest {
 		TestUser editor = newUser("editor");
 		TestUser viewer = newUser("viewer");
 		TestUser stranger = newUser("outsider");
-		int id = createPlaylist(owner.token(), "Shared", "private", SOMETHING);
+		int id = createPlaylist(owner.token(), "Shared", SOMETHING);
 
 		assertThat(putCollaborator(owner, id, editor.username(), "editor")).hasStatus(201);
 		assertThat(putCollaborator(owner, id, viewer.username(), "viewer")).hasStatus(201);
@@ -312,6 +308,10 @@ class PlaylistIT extends IntegrationTest {
 		List<String> roles = read(this.mvc.get().uri(API + "/me/playlists").header(HttpHeaders.AUTHORIZATION, editor.bearer())
 			.exchange(), "$.items[*].my_role");
 		assertThat(roles).containsExactly("editor");
+		assertThat(this.mvc.get().uri(API + "/me/playlists?role=owner").header(HttpHeaders.AUTHORIZATION, editor.bearer()))
+			.bodyJson()
+			.extractingPath("$.total")
+			.isEqualTo(0);
 	}
 
 	@Test
@@ -355,7 +355,7 @@ class PlaylistIT extends IntegrationTest {
 	void deletingAPlaylistIsForItsOwner() {
 		TestUser owner = newUser("deleter");
 		TestUser other = newUser("bystander");
-		int id = createPlaylist(owner.token(), "Doomed", "public", SOMETHING);
+		int id = createPublicPlaylist(owner.token(), "Doomed", SOMETHING);
 		assertThat(this.mvc.delete().uri(API + "/playlists/{id}", id).header(HttpHeaders.AUTHORIZATION, other.bearer()))
 			.hasStatus(403);
 		assertThat(this.mvc.delete().uri(API + "/playlists/{id}", id).header(HttpHeaders.AUTHORIZATION, owner.bearer()))

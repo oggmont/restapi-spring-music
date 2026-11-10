@@ -1,5 +1,6 @@
 package com.oggmont.music.playlist;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
@@ -14,7 +15,7 @@ import org.jspecify.annotations.Nullable;
  */
 final class PlaylistRequests {
 
-	static final int MAX_TRACKS_PER_REQUEST = 500;
+	static final int MAX_TRACKS_PER_REQUEST = PlaylistLimits.MAX_TRACKS;
 
 	/** Matches any string with a non-space character (null passes, as with every constraint). */
 	static final String NOT_BLANK = "(?s).*\\S.*";
@@ -25,30 +26,34 @@ final class PlaylistRequests {
 	/**
 	 * Body of {@code POST /playlists}.
 	 *
+	 * New playlists are always private: visibility follows favorites, so sending
+	 * {@code visibility} answers {@code 422 visibility_follows_favorites}. More than 100
+	 * tracks answer {@code 422 playlist_full}.
+	 *
 	 * @param name the name
 	 * @param description optional description
-	 * @param visibility public (default), unlisted or private
+	 * @param visibility not accepted; only read to refuse it
 	 * @param coverUrl optional cover image
-	 * @param trackIds optional tracks to start with, in order
+	 * @param trackIds optional tracks to start with, in order (at most 100)
 	 */
 	record CreatePlaylistRequest(@NotBlank @Size(max = 120) String name, @Nullable @Size(max = 2000) String description,
-			@Nullable @Size(max = 20) String visibility,
+			@Schema(hidden = true) @Nullable Object visibility,
 			@Nullable @Size(max = 500) @Pattern(regexp = "^https?://\\S+$", message = "must be an http(s) URL") String coverUrl,
-			@Nullable @Size(max = MAX_TRACKS_PER_REQUEST) List<@NotNull @Positive Integer> trackIds) {
+			@Nullable List<@NotNull @Positive Integer> trackIds) {
 	}
 
 	/**
 	 * Body of {@code PATCH /playlists/{id}} (received as a {@code PartialUpdate}): absent
 	 * fields stay unchanged; {@code null} clears {@code description} and {@code cover_url}.
+	 * {@code visibility} can't be changed: it follows favorites
+	 * ({@code 422 visibility_follows_favorites}).
 	 *
 	 * @param name new name
 	 * @param description new description
-	 * @param visibility public, unlisted or private
 	 * @param coverUrl new cover image
 	 */
 	record UpdatePlaylistRequest(@Nullable @Size(max = 120) @Pattern(regexp = NOT_BLANK, message = "must not be blank") String name,
 			@Nullable @Size(max = 2000) String description,
-			@Nullable @Size(max = 20) @Pattern(regexp = NOT_BLANK, message = "must not be blank") String visibility,
 			@Nullable @Size(max = 500) @Pattern(regexp = "^https?://\\S+$", message = "must be an http(s) URL") String coverUrl) {
 	}
 

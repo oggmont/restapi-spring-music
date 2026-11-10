@@ -51,6 +51,19 @@ class FollowRepository {
 			.optional();
 	}
 
+	boolean isFavorite(int me, int playlistId) {
+		return this.jdbc.sql("SELECT EXISTS (SELECT 1 FROM playlist_follow WHERE user_id = :me AND playlist_id = :id)")
+			.param("me", me)
+			.param("id", playlistId)
+			.query(Boolean.class)
+			.single();
+	}
+
+	/**
+	 * Adds a favorite. A sixth fails with {@code playlist_follow_limit}, also when the row
+	 * already exists (the trigger runs before {@code ON CONFLICT}), so check
+	 * {@link #isFavorite} first. Triggers make the playlist public and count the follower.
+	 */
 	void followPlaylist(int me, int playlistId) {
 		this.jdbc.sql("INSERT INTO playlist_follow (user_id, playlist_id) VALUES (:me, :id) ON CONFLICT DO NOTHING")
 			.param("me", me)
@@ -58,11 +71,44 @@ class FollowRepository {
 			.update();
 	}
 
-	void unfollowPlaylist(int me, int playlistId) {
-		this.jdbc.sql("DELETE FROM playlist_follow WHERE user_id = :me AND playlist_id = :id")
+	/** Removes a favorite; returns whether there was one. The last one makes the playlist private (trigger). */
+	boolean unfollowPlaylist(int me, int playlistId) {
+		return this.jdbc.sql("DELETE FROM playlist_follow WHERE user_id = :me AND playlist_id = :id")
 			.param("me", me)
 			.param("id", playlistId)
-			.update();
+			.update() > 0;
+	}
+
+	/** A playlist's visibility and follower count, and the caller's favorites, as triggers left them. */
+	Optional<FavoriteState> favoriteState(int me, int playlistId) {
+		return this.jdbc.sql("""
+				SELECT p.playlist_id, p.visibility, p.follower_count,
+				       EXISTS (SELECT 1 FROM playlist_follow f WHERE f.playlist_id = p.playlist_id AND f.user_id = :me)
+				           AS is_favorite,
+				       (SELECT count(*) FROM playlist_follow f WHERE f.user_id = :me) AS my_favorite_count
+				FROM playlist p
+				WHERE p.playlist_id = :id
+				""")
+			.param("me", me)
+			.param("id", playlistId)
+			.query((rs, rowNum) -> new FavoriteState(rs.getInt("playlist_id"), rs.getBoolean("is_favorite"),
+					rs.getString("visibility"), rs.getInt("follower_count"), rs.getInt("my_favorite_count"), null))
+			.optional();
+	}
+
+	/** A user's favorites (at most 5), A-Z or in the order they were added. */
+	List<FavoritePlaylist> favoritesOf(int userId, FavoriteSort sort) {
+		return this.jdbc.sql("""
+				SELECT f.followed_at, %s
+				FROM playlist_follow f
+				JOIN playlist_summary ps ON ps.playlist_id = f.playlist_id
+				WHERE f.user_id = :userId
+				ORDER BY %s
+				""".formatted(PlaylistSql.SUMMARY_COLUMNS, sort.orderBy))
+			.param("userId", userId)
+			.query((rs, rowNum) -> new FavoritePlaylist(PlaylistSql.summary(rs),
+					Rows.requiredInstant(rs, "followed_at")))
+			.list();
 	}
 
 	void followArtist(int me, int artistId) {
@@ -121,8 +167,11 @@ class FollowRepository {
 		return Page.of(items, page, total);
 	}
 
-	/** Followed playlists the caller can still view (a followed playlist may have become private). */
-	Page<FollowedPlaylist> followedPlaylists(int me, PageParams page) {
+	/**
+	 * Followed playlists (favorites) the caller can still view. A favorite keeps its
+	 * playlist public, so in practice that is all of them.
+	 */
+	Page<FollowedPlaylist> followedPlaylists(int me, FavoriteSort sort, PageParams page) {
 		String visible = """
 				WITH visible AS (
 				    SELECT playlist_id, followed_at FROM playlist_follow
@@ -131,21 +180,22 @@ class FollowRepository {
 				""";
 		List<FollowedPlaylist> items = this.jdbc.sql(visible + """
 				, page AS (
-				    SELECT playlist_id, followed_at FROM visible
-				    ORDER BY followed_at DESC, playlist_id
+				    SELECT f.playlist_id, f.followed_at, row_number() OVER (ORDER BY %1$s) AS n
+				    FROM visible f
+				    JOIN playlist p ON p.playlist_id = f.playlist_id
+				    ORDER BY %1$s
 				    LIMIT :limit OFFSET :offset
 				)
-				SELECT page.followed_at, """ + PlaylistSql.SUMMARY_COLUMNS + """
-
+				SELECT page.followed_at, %2$s
 				FROM page
 				JOIN playlist_summary ps ON ps.playlist_id = page.playlist_id
-				ORDER BY page.followed_at DESC, page.playlist_id
-				""")
+				ORDER BY page.n
+				""".formatted(sort.newestFirst, PlaylistSql.SUMMARY_COLUMNS))
 			.param("me", me)
 			.param("limit", page.resolvedLimit())
 			.param("offset", page.resolvedOffset())
 			.query((rs, rowNum) -> new FollowedPlaylist(Rows.requiredInstant(rs, "followed_at"),
-					PlaylistSql.summary(rs, null)))
+					PlaylistSql.summary(rs)))
 			.list();
 		long total = this.jdbc.sql(visible + "SELECT count(*) FROM visible").param("me", me).query(Long.class).single();
 		return Page.of(items, page, total);
@@ -186,6 +236,26 @@ class FollowRepository {
 	 * @param playlist the playlist
 	 */
 	record FollowedPlaylist(Instant followedAt, PlaylistSummary playlist) {
+	}
+
+	/** Orders of favorites lists, over {@code playlist_follow f} and {@code playlist p} / {@code playlist_summary ps}. */
+	enum FavoriteSort {
+
+		/** A-Z, ignoring accents and case. */
+		NAME("f_search_key(ps.name), f.playlist_id", "f_search_key(p.name), f.playlist_id"),
+
+		/** By when they were added: oldest first on profiles, newest first on {@code /me/following/playlists}. */
+		FOLLOWED_AT("f.followed_at, f.playlist_id", "f.followed_at DESC, f.playlist_id");
+
+		final String orderBy;
+
+		final String newestFirst;
+
+		FavoriteSort(String orderBy, String newestFirst) {
+			this.orderBy = orderBy;
+			this.newestFirst = newestFirst;
+		}
+
 	}
 
 }

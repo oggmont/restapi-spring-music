@@ -1,12 +1,16 @@
 package com.oggmont.music.catalog;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.fasterxml.jackson.annotation.JsonUnwrapped;
 import com.oggmont.music.common.Durations;
 import com.oggmont.music.common.jdbc.Rows;
 import java.sql.Types;
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.jspecify.annotations.Nullable;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -53,6 +57,92 @@ class TrackRepository {
 						rs.getBoolean("has_own_genre"), Rows.bool(rs, "is_liked"));
 			})
 			.optional();
+	}
+
+	/**
+	 * Song search with the schema's {@code search_tracks()}: track name, artists and album
+	 * title, accent-insensitive, best first. Every row carries the total.
+	 */
+	TrackSearchResults search(String query, @Nullable Integer me, int limit, int offset) {
+		record Row(TrackHit hit, long total) {
+		}
+		List<Row> rows = this.jdbc.sql("""
+				SELECT s.score, s.total,
+				""" + CatalogSql.TRACK_CARD_COLUMNS + ",\n" + CatalogSql.IS_LIKED + """
+
+				FROM search_tracks(:q, :limit, :offset) WITH ORDINALITY AS s(track_id, score, total, n)
+				JOIN track_detail td ON td.track_id = s.track_id
+				ORDER BY s.n
+				""")
+			.param("q", query)
+			.param("me", me, Types.INTEGER)
+			.param("limit", limit)
+			.param("offset", offset)
+			.query((rs, rowNum) -> new Row(new TrackHit(CatalogSql.trackCard(rs, true), rs.getDouble("score")),
+					rs.getLong("total")))
+			.list();
+		long total = rows.isEmpty() ? countMatches(query) : rows.getFirst().total();
+		return new TrackSearchResults(query, rows.stream().map(Row::hit).toList(), limit, offset, total);
+	}
+
+	/** The number of matches, for a page past the last one (which has no rows to read it from). */
+	private long countMatches(String query) {
+		return this.jdbc.sql("SELECT coalesce(max(total), 0) FROM search_tracks(:q, 1, 0)")
+			.param("q", query)
+			.query(Long.class)
+			.single();
+	}
+
+	/**
+	 * Random tracks from the schema's {@code random_tracks()}, which can come back a
+	 * little short (gaps in the IDs); asks again for the rest, a few times at most.
+	 */
+	List<TrackCard> random(@Nullable Integer me, int limit, Set<Integer> exclude) {
+		Set<Integer> skip = new LinkedHashSet<>(exclude);
+		List<Integer> picked = new ArrayList<>();
+		for (int attempt = 0; attempt < 3 && picked.size() < limit; attempt++) {
+			List<Integer> ids = this.jdbc.sql("SELECT r FROM random_tracks(:limit, CAST(:exclude AS integer[])) r")
+				.param("limit", limit - picked.size())
+				.param("exclude", skip.stream().mapToInt(Integer::intValue).toArray())
+				.query(Integer.class)
+				.list();
+			picked.addAll(ids);
+			skip.addAll(ids);
+		}
+		return this.jdbc.sql("""
+				SELECT
+				""" + CatalogSql.TRACK_CARD_COLUMNS + ",\n" + CatalogSql.IS_LIKED + """
+
+				FROM unnest(CAST(:ids AS integer[])) WITH ORDINALITY AS r(track_id, n)
+				JOIN track_detail td ON td.track_id = r.track_id
+				ORDER BY r.n
+				""")
+			.param("ids", picked.stream().mapToInt(Integer::intValue).toArray())
+			.param("me", me, Types.INTEGER)
+			.query((rs, rowNum) -> CatalogSql.trackCard(rs, true))
+			.list();
+	}
+
+	/**
+	 * Results of {@code GET /tracks?q=}.
+	 *
+	 * @param query the search, as searched
+	 * @param items matching tracks, best first
+	 * @param limit the page size
+	 * @param offset how many matches were skipped
+	 * @param total how many tracks match
+	 */
+	record TrackSearchResults(String query, List<TrackHit> items, int limit, int offset, long total) {
+	}
+
+	/**
+	 * A matching track: the track card's fields, plus its relevance.
+	 *
+	 * @param track the track (its fields appear at the top level)
+	 * @param score relevance: 1 for the whole name, 0.9 its start, 0.8 anywhere in the name,
+	 * 0.5 to 0.75 for matches in the artist or album only
+	 */
+	record TrackHit(@JsonUnwrapped TrackCard track, double score) {
 	}
 
 	/**

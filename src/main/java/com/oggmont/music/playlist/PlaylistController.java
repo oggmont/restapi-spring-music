@@ -51,10 +51,10 @@ class PlaylistController {
 	}
 
 	@PostMapping("/playlists")
-	@Operation(summary = "Create a playlist, optionally with up to 100 tracks (always private; at most 20 per user)",
+	@Operation(summary = "Create a playlist, optionally with up to 20 tracks (always private; at most 20 per user)",
 			description = "New playlists are private: visibility follows favorites, so sending `visibility` answers "
 					+ "422 `visibility_follows_favorites`. 422 `playlist_limit_reached` when you already own 20, "
-					+ "422 `playlist_full` for more than 100 `track_ids`.")
+					+ "422 `playlist_full` for more than 20 `track_ids`.")
 	ResponseEntity<PlaylistDetail> create(@CurrentUser Caller caller, @Valid @RequestBody PlaylistRequests.CreatePlaylistRequest request) {
 		PlaylistDetail playlist = this.playlists.create(caller, request);
 		return ResponseEntity.created(location(playlist)).eTag(IfMatch.etag(playlist.version())).body(playlist);

@@ -63,7 +63,7 @@ public final class DatabaseErrors {
 					VISIBILITY_MESSAGE),
 			invalid("playlist_follow_limit", ErrorCodes.FAVORITE_LIMIT_REACHED, null,
 					"You already have 5 favorite playlists. Remove one, or replace it (send \"replaces\")."),
-			invalid("playlist_track_limit", ErrorCodes.PLAYLIST_FULL, "track_ids", "A playlist holds at most 100 tracks."),
+			invalid("playlist_track_limit", ErrorCodes.PLAYLIST_FULL, "track_ids", "A playlist holds at most 20 tracks."),
 			invalid("playlist_owner_limit", ErrorCodes.PLAYLIST_LIMIT_REACHED, null,
 					"You already own 20 playlists, the most you can have. Delete one to make another."),
 			invalid("playlist_track_track_id_fkey", "unknown_track", "track_ids", "One or more tracks don't exist."),

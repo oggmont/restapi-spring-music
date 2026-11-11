@@ -12,7 +12,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The web UI's limits (20 owned playlists, 100 tracks per playlist), derived visibility,
+ * The web UI's limits (20 owned playlists, 20 tracks per playlist), derived visibility,
  * the add menu's {@code /me/playlists} parameters and random playlists.
  */
 class PlaylistLimitsIT extends IntegrationTest {
@@ -41,9 +41,9 @@ class PlaylistLimitsIT extends IntegrationTest {
 	}
 
 	@Test
-	void aPlaylistHoldsAtMostOneHundredTracks() {
-		TestUser owner = newUser("hundred");
-		List<Integer> tracks = this.jdbc.sql("SELECT track_id FROM track ORDER BY track_id LIMIT 101")
+	void aPlaylistHoldsAtMostTwentyTracks() {
+		TestUser owner = newUser("trackcap");
+		List<Integer> tracks = this.jdbc.sql("SELECT track_id FROM track ORDER BY track_id LIMIT 21")
 			.query(Integer.class)
 			.list();
 		assertThat(create(owner, "Too big", tracks)).hasStatus(422)
@@ -51,20 +51,20 @@ class PlaylistLimitsIT extends IntegrationTest {
 			.extractingPath("$.error.code")
 			.isEqualTo("playlist_full");
 
-		MvcTestResult created = create(owner, "Nearly full", tracks.subList(0, 98));
+		MvcTestResult created = create(owner, "Nearly full", tracks.subList(0, 18));
 		assertThat(created).hasStatus(201);
 		int id = read(created, "$.playlist_id");
-		assertThat(addTracks(owner, id, tracks.subList(98, 101))).hasStatus(422).bodyJson().satisfies((json) -> {
+		assertThat(addTracks(owner, id, tracks.subList(18, 21))).hasStatus(422).bodyJson().satisfies((json) -> {
 			assertThat(json).extractingPath("$.error.code").isEqualTo("playlist_full");
 			assertThat(json).extractingPath("$.error.message")
-				.isEqualTo("Nearly full has 98 of 100 tracks; 2 more fit, not 3.");
+				.isEqualTo("Nearly full has 18 of 20 tracks; 2 more fit, not 3.");
 			assertThat(json).extractingPath("$.error.details[0].message").isEqualTo("at most 2");
 		});
-		assertThat(addTracks(owner, id, tracks.subList(98, 100))).hasStatus(201);
+		assertThat(addTracks(owner, id, tracks.subList(18, 20))).hasStatus(201);
 		assertThat(addTracks(owner, id, List.of(SOMETHING))).hasStatus(422)
 			.bodyJson()
 			.extractingPath("$.error.message")
-			.isEqualTo("Nearly full has 100 of 100 tracks; it's full.");
+			.isEqualTo("Nearly full has 20 of 20 tracks; it's full.");
 
 		// The Beatles: Original Albums (193 tracks) is older than the limit: it can't be copied whole.
 		assertThat(this.mvc.post().uri(API + "/playlists/19/copy").header(HttpHeaders.AUTHORIZATION, owner.bearer()))

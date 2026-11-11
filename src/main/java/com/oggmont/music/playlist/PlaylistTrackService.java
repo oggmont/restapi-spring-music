@@ -45,7 +45,7 @@ class PlaylistTrackService {
 
 	/**
 	 * Appends, or inserts at {@code position} and pushes the following entries down. A
-	 * playlist holds at most 100 entries ({@code 422 playlist_full}, saying how many fit).
+	 * playlist holds at most 20 entries ({@code 422 playlist_full}, saying how many fit).
 	 */
 	@Transactional
 	TrackListChanges.Added add(int playlistId, Caller caller, PlaylistRequests.AddTracksRequest request, IfMatch ifMatch) {

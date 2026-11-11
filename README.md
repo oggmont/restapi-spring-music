@@ -140,7 +140,7 @@ From [Favorites, visibility and limits](https://github.com/oggmont/design-music-
 | Rule | Error when broken |
 |---|---|
 | At most **5 favorites** per user, own playlists included. `PUT /me/following/playlists/{id}` with `{"replaces": <id>}` swaps one out in one transaction | `422 favorite_limit_reached` |
-| At most **100 tracks** per playlist (and per request) | `422 playlist_full`, saying how many still fit |
+| At most **20 tracks** per playlist (and per request) | `422 playlist_full`, saying how many still fit |
 | At most **20 playlists** owned per user (collaborations don't count) | `422 playlist_limit_reached` |
 | Visibility follows favorites (above) | `422 visibility_follows_favorites` |
 
@@ -171,7 +171,7 @@ Where this implementation adds to or adapts the design:
 - **`GET /playlists/shared/{share_token}/tracks`** lets someone with a share link read the entries (the design only covers the details). Share links only open public playlists for now: under "visibility follows favorites" no playlist is `unlisted`.
 - **`GET /me`** also returns the account's `role`.
 - **Favorites**: `PUT` and `DELETE /me/following/playlists/{id}` answer `200` with the playlist's new state (`is_favorite`, `visibility`, `follower_count`, `my_favorite_count`, and `replaced` after a swap). `DELETE` of a playlist you can't view and never had as a favorite answers `404`, so it doesn't reveal private playlists.
-- **Three seed playlists are older than the 100-track limit** (*Music*, *90's Music*, *The Beatles: Original Albums*): nothing can be added to them or copied from them whole, but their entries can still be moved and removed.
+- **Nine seed playlists are older than the 20-track limit** (all owned by `musicdb`: *Music*, *90's Music*, *The Beatles: Original Albums*, *Classical*, *Brazilian Music*, *Heavy Metal Classic* and the three *Classical 101* playlists): nothing can be added to them or copied from them whole, but their entries can still be moved and removed.
 - **`GET /tracks?q=`** ranks matches in the track's name (1.0, 0.9, 0.8) above matches in its artist or album only (0.5 to 0.75), and also answers `422 query_too_short` when `q` is missing.
 - **Roles and `/admin/users/...`**: the design notes that catalog administration needs a role the schema doesn't have; it lives in the API's `auth` schema.
 

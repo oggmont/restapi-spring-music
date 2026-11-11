@@ -41,7 +41,7 @@ public final class ErrorCodes {
 	/** A sixth favorite playlist (limit 5). */
 	public static final String FAVORITE_LIMIT_REACHED = "favorite_limit_reached";
 
-	/** A 101st track in a playlist (limit 100). */
+	/** A 21st track in a playlist (limit 20). */
 	public static final String PLAYLIST_FULL = "playlist_full";
 
 	/** A 21st owned playlist (limit 20). */

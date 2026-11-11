@@ -27,14 +27,14 @@ final class PlaylistRequests {
 	 * Body of {@code POST /playlists}.
 	 *
 	 * New playlists are always private: visibility follows favorites, so sending
-	 * {@code visibility} answers {@code 422 visibility_follows_favorites}. More than 100
+	 * {@code visibility} answers {@code 422 visibility_follows_favorites}. More than 20
 	 * tracks answer {@code 422 playlist_full}.
 	 *
 	 * @param name the name
 	 * @param description optional description
 	 * @param visibility not accepted; only read to refuse it
 	 * @param coverUrl optional cover image
-	 * @param trackIds optional tracks to start with, in order (at most 100)
+	 * @param trackIds optional tracks to start with, in order (at most 20)
 	 */
 	record CreatePlaylistRequest(@NotBlank @Size(max = 120) String name, @Nullable @Size(max = 2000) String description,
 			@Schema(hidden = true) @Nullable Object visibility,

@@ -51,7 +51,7 @@ class PlaylistService {
 
 	/**
 	 * Creates the playlist and its first entries in one transaction. It starts private;
-	 * favoriting it makes it public. At most 20 owned playlists and 100 tracks (the
+	 * favoriting it makes it public. At most 20 owned playlists and 20 tracks (the
 	 * database enforces both; the checks here only give clearer messages).
 	 */
 	@Transactional
@@ -114,7 +114,7 @@ class PlaylistService {
 
 	/**
 	 * Copies a playlist the caller can view into a new private playlist the caller owns.
-	 * The copy counts toward the caller's 20 playlists and holds at most 100 tracks.
+	 * The copy counts toward the caller's 20 playlists and holds at most 20 tracks.
 	 */
 	@Transactional
 	PlaylistDetail copy(int playlistId, Caller caller, @Nullable String name) {

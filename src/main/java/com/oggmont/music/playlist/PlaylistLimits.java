@@ -15,7 +15,7 @@ import org.springframework.http.HttpStatus;
 final class PlaylistLimits {
 
 	/** Entries per playlist. */
-	static final int MAX_TRACKS = 100;
+	static final int MAX_TRACKS = 20;
 
 	/** Playlists a user owns (collaborations don't count). */
 	static final int MAX_OWNED = 20;

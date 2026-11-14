@@ -32,8 +32,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '25'
@@ -48,12 +48,12 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: oggmont/db-postgresql-runlist
           path: db-postgresql-runlist
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@77dd5b2ce225ea11469928ac317850245a74ae78 # v6.2.0
         with:
           distribution: temurin
           java-version: '25'
@@ -74,26 +74,29 @@ jobs:
       group: deploy-api
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - id: auth
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ env.WIF_PROVIDER }}
           service_account: ${{ env.DEPLOYER }}
           token_format: access_token
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
 
-      - uses: docker/login-action@v4
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGION }}-docker.pkg.dev
           username: oauth2accesstoken
           password: ${{ steps.auth.outputs.access_token }}
 
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        env:
+          # No build-record artifact: on a public repo anyone could download the build logs.
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           push: true
@@ -104,8 +107,9 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Scales to zero and bills per request (free tier). Direct VPC egress (no connector, no
-      # cost) reaches the database VM's internal IP. Secrets come from Secret Manager.
+      # Scales to zero and bills per request (free tier). Ingress is internal only: the internet
+      # can't call it, only the UI (through the VPC). Direct VPC egress (no connector, no cost)
+      # reaches the database VM's internal IP. Secrets come from Secret Manager.
       - name: Deploy to Cloud Run
         run: |
           gcloud run deploy "$SERVICE" \
@@ -115,8 +119,9 @@ jobs:
             --port 8080 --cpu 1 --memory 1Gi \
             --min-instances 0 --max-instances 2 --concurrency 80 --cpu-throttling --cpu-boost \
             --timeout 60 \
+            --ingress internal \
             --network default --subnet default --vpc-egress private-ranges-only \
-            --set-env-vars "DB_HOST=$DB_HOST,DB_PORT=5432,DB_NAME=music_db,DB_USER=music,DB_POOL_SIZE=5,APP_CORS_ALLOWED_ORIGINS=$UI_URL,APP_ADMIN_USERNAME=oscargm,APP_API_DOCS_ENABLED=true" \
+            --set-env-vars "DB_HOST=$DB_HOST,DB_PORT=5432,DB_NAME=music_db,DB_USER=music,DB_POOL_SIZE=5,APP_CORS_ALLOWED_ORIGINS=$UI_URL,APP_ADMIN_USERNAME=oscargm,APP_API_DOCS_ENABLED=false" \
             --set-secrets "DB_PASSWORD=runlist-db-password:latest,APP_JWT_SECRET=runlist-jwt-secret:latest,APP_ADMIN_PASSWORD=runlist-admin-password:latest" \
             --labels app=runlist,component=api \
             --quiet

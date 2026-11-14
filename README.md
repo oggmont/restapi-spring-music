@@ -236,7 +236,7 @@ The integration tests (`*IT`) start PostgreSQL 17 with Testcontainers and load t
 
 ## Deployment (Google Cloud)
 
-The API runs on Cloud Run as `runlist-api` (https://runlist-api-894040023319.us-central1.run.app), inside the GCP free tier. The web UI calls it through its own `/api` proxy.
+The API runs on Cloud Run as `runlist-api`, inside the GCP free tier. Its ingress is **internal**: only the web UI reaches it, through the UI's own `/api` proxy and the VPC. The internet can't reach its URL, Swagger UI and `/v3/api-docs` are off (`APP_API_DOCS_ENABLED=false`), and login and sign-up are rate-limited by the UI's nginx. Use Swagger UI on a local run.
 
 - **Service:** 1 vCPU and 1 GiB, scales from 0 to 2 instances, billed per request, with startup CPU boost. Expect a few seconds on the first request after a quiet period.
 - **Database:** PostgreSQL 17 in Docker on the free e2-micro VM `runlist-db`. The API reaches it at `10.128.0.10:5432` through Direct VPC egress. The VM has no public IP.

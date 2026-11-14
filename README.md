@@ -31,6 +31,7 @@ A REST API for the **music-db** playlist platform: a music catalog (artists, alb
 - [Tests](#tests)
 - [How the database is used](#how-the-database-is-used)
 - [Docker image](#docker-image)
+- [Environments](#environments)
 - [Deployment (Google Cloud)](#deployment-google-cloud)
 - [Project layout](#project-layout)
 - [Before going to production](#before-going-to-production)
@@ -233,6 +234,24 @@ The integration tests (`*IT`) start PostgreSQL 17 with Testcontainers and load t
 - **Runs as a non-root user**, sizes its heap from the container's memory limit (`-XX:MaxRAMPercentage=75`, 768 MB limit in compose) and reports health from `/actuator/health/readiness`.
 
 [docker-compose.yml](docker-compose.yml) joins the database's `music-db_default` network, so the API reaches PostgreSQL as `music-db-postgres:5432` without going through the host.
+
+## Environments
+
+Runlist has two environments. **Use dev for everything except real use**, so prod stays inside the GCP free tier and doesn't get billed.
+
+| Environment | Where it runs | What it's for |
+|---|---|---|
+| **dev** | Docker on the owner's Mac (not GCP): the database (db-postgresql-runlist, `make up`), the API (restapi-spring-runlist, `make up`, http://localhost:8081) and the UI (ui-react-runlist, `make up`, http://localhost:5173) | Development, testing, trying changes, demos, end-to-end and load tests. Free; use it as much as you like. |
+| **prod** | GCP project `runlist-514701` (free tier): the UI at https://runlist-ui-894040023319.us-central1.run.app, the API on Cloud Run (internal only), PostgreSQL on the e2-micro VM `runlist-db` | Real use, a few sessions a week. |
+
+Rules for prod:
+
+- **Keep usage light.** Don't point tests, scripts, load tests or e2e suites at prod, and don't use it to debug. Reproduce problems in dev. Heavy traffic can push it out of the free tier: Cloud Run CPU time, outbound traffic and logs are billed beyond the free amounts.
+- **Every push to `main` of the UI or the API deploys to prod**, through the GitHub Actions workflows (pushes that only change Markdown files don't). Check changes in dev first (`make test`, `make verify`, and the API at http://localhost:8081), and group them instead of pushing many small deploys.
+- **Prod data is real.** It holds what people did in the app. Don't reset or edit it to test something; back it up before any change (db-postgresql-runlist's workflow, `backup` action).
+- A budget alert (about $1 a month) emails the billing account if prod starts costing money. It only alerts; it doesn't stop anything.
+
+Swagger UI is only available in dev (http://localhost:8081/swagger-ui.html): prod's API isn't reachable from the internet.
 
 ## Deployment (Google Cloud)
 

@@ -10,6 +10,8 @@ name: CI/CD
 on:
   push:
     branches: [main]
+    # Docs-only pushes don't redeploy prod (keep prod usage, and the bill, at the minimum).
+    paths-ignore: ['**.md']
   pull_request:
   workflow_dispatch:
 

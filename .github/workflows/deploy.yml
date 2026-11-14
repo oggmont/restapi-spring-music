@@ -97,6 +97,9 @@ jobs:
         with:
           context: .
           push: true
+          # One manifest per image (no attestations), so the "keep 2 newest" cleanup counts images
+          provenance: false
+          sbom: false
           tags: ${{ env.IMAGE }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

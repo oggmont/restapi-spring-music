@@ -1,0 +1,104 @@
+# CI/CD for the API.
+#   Pull requests and pushes: unit and integration tests (./mvnw verify). The integration tests
+#   load the real schema and seed from db-postgresql-runlist, checked out next to this repo.
+#   Pushes to main (or a manual run): build the image, push it to Artifact Registry and deploy
+#   it to Cloud Run as "runlist-api", connected to the PostgreSQL VM over the VPC.
+# GCP access is keyless (Workload Identity Federation); the infrastructure is created by
+# db-postgresql-runlist/deploy/gcp/setup.sh. GitHub Actions is free for public repositories.
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_ID: runlist-514701
+  REGION: us-central1
+  SERVICE: runlist-api
+  IMAGE: us-central1-docker.pkg.dev/runlist-514701/runlist/api
+  # The web UI's Cloud Run URL (the only browser origin; it proxies /api, so CORS rarely applies)
+  UI_URL: https://runlist-ui-894040023319.us-central1.run.app
+  # Fixed internal IP of the "runlist-db" VM (reserved address runlist-db-internal)
+  DB_HOST: 10.128.0.10
+  WIF_PROVIDER: projects/894040023319/locations/global/workloadIdentityPools/github/providers/github-oidc
+  DEPLOYER: github-deployer@runlist-514701.iam.gserviceaccount.com
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: oggmont/db-postgresql-runlist
+          path: db-postgresql-runlist
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+      - name: Unit and integration tests
+        env:
+          MUSIC_DB_INIT_DIR: ${{ github.workspace }}/db-postgresql-runlist/db/init
+        run: ./mvnw -B -ntp verify
+
+  deploy:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: deploy-api
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: auth
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.DEPLOYER }}
+          token_format: access_token
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Scales to zero and bills per request (free tier). Direct VPC egress (no connector, no
+      # cost) reaches the database VM's internal IP. Secrets come from Secret Manager.
+      - name: Deploy to Cloud Run
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" --region "$REGION" \
+            --image "$IMAGE:${{ github.sha }}" \
+            --service-account "runlist-api@$PROJECT_ID.iam.gserviceaccount.com" \
+            --port 8080 --cpu 1 --memory 1Gi \
+            --min-instances 0 --max-instances 2 --concurrency 80 --cpu-throttling --cpu-boost \
+            --timeout 60 \
+            --network default --subnet default --vpc-egress private-ranges-only \
+            --set-env-vars "DB_HOST=$DB_HOST,DB_PORT=5432,DB_NAME=music_db,DB_USER=music,DB_POOL_SIZE=5,APP_CORS_ALLOWED_ORIGINS=$UI_URL,APP_ADMIN_USERNAME=oscargm,APP_API_DOCS_ENABLED=true" \
+            --set-secrets "DB_PASSWORD=runlist-db-password:latest,APP_JWT_SECRET=runlist-jwt-secret:latest,APP_ADMIN_PASSWORD=runlist-admin-password:latest" \
+            --labels app=runlist,component=api \
+            --quiet
+          echo "Deployed: $(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format 'value(status.url)')" >> "$GITHUB_STEP_SUMMARY"

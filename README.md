@@ -31,6 +31,7 @@ A REST API for the **music-db** playlist platform: a music catalog (artists, alb
 - [Tests](#tests)
 - [How the database is used](#how-the-database-is-used)
 - [Docker image](#docker-image)
+- [Deployment (Google Cloud)](#deployment-google-cloud)
 - [Project layout](#project-layout)
 - [Before going to production](#before-going-to-production)
 
@@ -232,6 +233,26 @@ The integration tests (`*IT`) start PostgreSQL 17 with Testcontainers and load t
 - **Runs as a non-root user**, sizes its heap from the container's memory limit (`-XX:MaxRAMPercentage=75`, 768 MB limit in compose) and reports health from `/actuator/health/readiness`.
 
 [docker-compose.yml](docker-compose.yml) joins the database's `music-db_default` network, so the API reaches PostgreSQL as `music-db-postgres:5432` without going through the host.
+
+## Deployment (Google Cloud)
+
+The API runs on Cloud Run as `runlist-api` (https://runlist-api-894040023319.us-central1.run.app), inside the GCP free tier. The web UI calls it through its own `/api` proxy.
+
+- **Service:** 1 vCPU and 1 GiB, scales from 0 to 2 instances, billed per request, with startup CPU boost. Expect a few seconds on the first request after a quiet period.
+- **Database:** PostgreSQL 17 in Docker on the free e2-micro VM `runlist-db`. The API reaches it at `10.128.0.10:5432` through Direct VPC egress. The VM has no public IP.
+- **Settings:** set by the workflow:
+  - environment: `DB_HOST`, `DB_POOL_SIZE=5`, `APP_CORS_ALLOWED_ORIGINS` (the UI's URL), `APP_ADMIN_USERNAME=oscargm`
+  - Secret Manager: `DB_PASSWORD` (`runlist-db-password`), `APP_JWT_SECRET` (`runlist-jwt-secret`), `APP_ADMIN_PASSWORD` (`runlist-admin-password`)
+- **Super user:** `oscargm`. Get its password with `gcloud secrets versions access latest --secret runlist-admin-password --project runlist-514701`.
+
+[.github/workflows/deploy.yml](.github/workflows/deploy.yml) does the following:
+
+- **On every push and pull request:** runs the unit tests and the integration tests. The integration tests use db-postgresql-runlist's `db/init`, checked out by the workflow. Only the unit tests gate the deploy for now: many integration tests still assume the old seed and fail against the Spotify seed.
+- **On pushes to `main`, or when you run it by hand:** builds the [Dockerfile](Dockerfile), pushes the image to Artifact Registry (`us-central1-docker.pkg.dev/runlist-514701/runlist/api`) and deploys it.
+
+The workflow authenticates without keys, through Workload Identity Federation.
+
+The infrastructure, costs, operations (logs, SQL shell, backups) and what to avoid so it stays free are in db-postgresql-runlist's [deploy/gcp/README.md](https://github.com/oggmont/db-postgresql-runlist/blob/main/deploy/gcp/README.md).
 
 ## Project layout
 
